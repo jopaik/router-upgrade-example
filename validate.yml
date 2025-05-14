@@ -1,0 +1,41 @@
+---
+- name: Playbook to validate post upgrade router(s)
+  hosts: _group
+  gather_facts: False
+
+  tasks:
+    - name: gather facts
+      cisco.ios.ios_facts:
+
+    - name: check image version
+      ansible.builtin.debug:
+        msg: "The current image file is {{ ansible_net_image }}"
+
+    - name: set image_version_check to pass
+      ansible.builtin.set_fact:
+        image_version_check: "bootflash:/{{ new_image_ios }}" 
+
+    - name: fail task if image version check fails
+      ansible.builtin.fail:
+        msg: "Incorrect Version Detected After Upgrade. Please Check!"
+      when: image_version_check != ansible_net_image
+
+    - name: Fetch OSPF neighbor state and parse with pyats
+      ansible.utils.cli_parse:
+        command: show ip ospf neighbor 
+        parser:
+          name: ansible.netcommon.pyats
+      register: ios_pyats_show_ospf_neighbor
+
+    - name: validate OSPF neighbor state
+      ansible.utils.validate:
+        data: "{{ ios_pyats_show_ospf_neighbor ['parsed']['interfaces']['Tunnel0']['neighbors']}}"
+        criteria:
+          - "{{ lookup('file','criteria/ios_show_ospf_criteria.json') | from_json }}"
+        engine: ansible.utils.jsonschema
+      register: result
+
+    - name: Test result
+      ansible.builtin.debug:
+        var: result
+      

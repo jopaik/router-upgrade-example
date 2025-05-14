@@ -1,0 +1,42 @@
+---
+- name: Playbook to stage/tftp .bin to router bootflash
+  hosts: cisco_only
+  gather_facts: False
+
+  tasks:
+  - name: check if image already exist in bootflash
+    ios_command:
+      commands: 'dir bootflash: | include {{ new_image_ios }}'
+    register: check_image
+  
+  - name: fetch new image from tftp to bootflash
+    vars:
+      ansible_command_timeout: 2400
+      number_of_retries: 2
+    ios_command:
+      commands:
+        - command: 'copy tftp://172.16.78.197/{{ new_image_ios }} bootflash:'
+          prompt: 'Destination filename \[{{ new_image_ios }}\]'
+          answer: "\r"
+      interval: 10
+      retries: "{{ number_of_retries | int }}"
+      wait_for: result[0] contains OK
+    when: check_image.stdout[0].find( new_image_ios )  == -1
+
+  - name: Verify MD5 Hash of Image File
+    vars:
+      ansible_command_timeout: 1200
+    ios_command:
+      commands: 'verify /md5 bootflash:/{{ new_image_ios }} {{ md5_hash }}'
+    register: md5_hash_verification_results
+  
+  - name: Set md5_hash_verification to pass/fail
+    set_fact:
+      md5_hash_verification: "pass"
+    when: md5_hash_verification_results.stdout[0].find('Verified') != -1
+      
+  - name: Fail Task if MD5 Hash Check Fails
+    fail:
+      msg: "MD5 Hash Check Fails. Please check the uploaded image!"
+    when: md5_hash_verification_results.stdout[0].find('Verified') == -1
+
