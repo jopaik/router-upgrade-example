@@ -1,0 +1,53 @@
+---
+- name: Pre-Check Cisco IOS Upgrade
+  hosts: cisco_ios_devices
+  gather_facts: false
+
+  vars:
+    # Optional: Define variables for expected states.  Good practice to externalize.
+    expected_interface_state: "up"
+    expected_config_changes: 0  # Example: Expect no config changes before upgrade
+
+  tasks:
+    - name: Check device reachability
+      ios_command:
+        commands:
+          - "show version"
+      register: version_output
+      ignore_errors: true  # Allows playbook to continue if a device is temporarily unreachable
+
+    - name: Fail if device is unreachable
+      fail:
+        msg: "Device {{ inventory_hostname }} is unreachable. Aborting pre-check."
+      when: version_output.failed
+
+    - name: Check interface status
+      ios_command:
+        commands:
+          - "show interface"
+      register: interface_status
+
+    - name: Assert all interfaces are up (or as expected)
+      assert:
+        that:
+          - "'{{ expected_interface_state }}' in item" # Corrected Jinja syntax.  String comparison.
+        fail_msg: "Interface {{ item.split()[0] }} on {{ inventory_hostname }} is not {{ expected_interface_state }}."
+      with_items: "{{ interface_status.stdout[0].splitlines() | select('contains', 'line protocol is') | list }}"
+      # Example output line: "GigabitEthernet1 is up, line protocol is up "
+
+    - name: Get current configuration
+      ios_config:
+        save: false  # Don't save config, just retrieve
+      register: current_config
+
+    - name: Check for unexpected configuration changes (before upgrade)
+      assert:
+        that:
+          - current_config.changed == false  # Check if any changes were detected.
+        fail_msg: "Unexpected configuration changes detected on {{ inventory_hostname }} before upgrade!"
+      when: expected_config_changes == 0 # only check if we expect no changes
+
+    - name: Display pre-check results
+      debug:
+        msg: "Pre-check completed for {{ inventory_hostname }}.  All interface states are {{ expected_interface_state }} (as expected), and no config changes." # improved message
+      when: current_config.changed == false

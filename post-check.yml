@@ -1,0 +1,52 @@
+---
+- name: Post-Check Cisco IOS Upgrade
+  hosts: cisco_ios_devices
+  gather_facts: false
+
+  vars:
+    # Define expected states *after* the upgrade.  These might be different!
+    expected_interface_state: "up"  #  Most likely, you want interfaces to be up.
+    expected_config_changes: 0      #  Expect config changes from the upgrade itself.
+    #  If you made config changes *before* the upgrade, this should be 0.
+
+  tasks:
+    - name: Check device reachability
+      ios_command:
+        commands:
+          - "show version"
+      register: version_output
+      ignore_errors: true
+
+    - name: Fail if device is unreachable
+      fail:
+        msg: "Device {{ inventory_hostname }} is unreachable after upgrade. Aborting post-check."
+      when: version_output.failed
+
+    - name: Check interface status after upgrade
+      ios_command:
+        commands:
+          - "show interface"
+      register: interface_status
+
+    - name: Assert all interfaces are up after upgrade
+      assert:
+        that:
+          - "'{{ expected_interface_state }}' in item"
+        fail_msg: "Interface {{ item.split()[0] }} on {{ inventory_hostname }} is not {{ expected_interface_state }} after upgrade."
+      with_items: "{{ interface_status.stdout[0].splitlines() | select('contains', 'line protocol is') | list }}"
+
+    - name: Get configuration after upgrade
+      ios_config:
+        save: false
+      register: post_upgrade_config
+
+    - name: Check for configuration changes after upgrade
+      assert:
+        that:
+          - post_upgrade_config.changed == false # changed to false
+        fail_msg: "Configuration has changed unexpectedly on {{ inventory_hostname }} after upgrade."
+      when: expected_config_changes == 0 # only check if we expect *no* changes.
+
+    - name: Display post-check results
+      debug:
+        msg: "Post-check completed for {{ inventory_hostname }}.  All interface states are {{ expected_interface_state }} (as expected), and config changes are: {{ post_upgrade_config.changed }}"
